@@ -5,24 +5,39 @@
 ╚══════════════════════════════════════════════╝
 
 Como usar:
-  1. pip install flask google-generativeai
-  2. Coloque sua API Key do Google Gemini abaixo (API_KEY)
+  1. pip install flask google-genai python-dotenv gunicorn
+  2. Crie um arquivo .env com: GEMINI_API_KEY=sua_chave_aqui
      Obtenha grátis em: https://aistudio.google.com/app/apikey
   3. python fredao.py
   4. Abra http://127.0.0.1:8080 no navegador
+
+Para deploy no Render:
+  - Adicione GEMINI_API_KEY como variável de ambiente no painel do Render
+  - Nunca suba o .env para o GitHub!
 """
 
 from flask import Flask, request, jsonify, session
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
 import uuid, os
 
 # ═══════════════════════════════════════════════
-#  CONFIGURAÇÃO  —  edite aqui
+#  CONFIGURAÇÃO
 # ═══════════════════════════════════════════════
-API_KEY = "AIzaSyCZk9AlpFUqbR5XC5R-4Lsx8AsdgX9JlyU"   # <- cole sua chave do Google AI Studio
-MODEL   = "gemini-2.5-flash"          # modelo gratuito e rápido
-PORT    = 8080
+load_dotenv()  # carrega o .env localmente (ignorado no Render)
+
+API_KEY = os.environ.get("GEMINI_API_KEY", "")
+MODEL   = "gemini-2.5-flash"
+PORT    = int(os.environ.get("PORT", 8080))
 # ═══════════════════════════════════════════════
+
+if not API_KEY:
+    raise RuntimeError(
+        "GEMINI_API_KEY não encontrada!\n"
+        "Local: crie um arquivo .env com GEMINI_API_KEY=sua_chave\n"
+        "Render: adicione a variável de ambiente no painel"
+    )
 
 SYSTEM_PROMPT = """
 Você é o FREDÃO, uma IA simpática, inteligente e bem-humorada criada para ajudar o seu usuário.
@@ -36,12 +51,12 @@ Lembre-se: você é o FREDÃO — confiante, prestativo e com personalidade pró
 """.strip()
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.environ.get("FLASK_SECRET", os.urandom(24))
 
-# ─── Configura o Gemini ───────────────────────
-genai.configure(api_key=API_KEY)
+# ─── Configura o Gemini (nova SDK google-genai) ───
+client = genai.Client(api_key=API_KEY)
 
-# Históricos por sessão: { sid: [{"role": "user"/"model", "parts": ["texto"]}] }
+# Históricos por sessão: { sid: [types.Content(...)] }
 historicos: dict = {}
 
 # ─── HTML embutido ────────────────────────────
@@ -318,30 +333,27 @@ def chat():
         historicos[sid] = []
 
     try:
-        # Cria o modelo com a personalidade do FREDÃO como system instruction
-        model = genai.GenerativeModel(
-            model_name=MODEL,
-            system_instruction=SYSTEM_PROMPT
+        # Adiciona mensagem do usuário ao histórico
+        historicos[sid].append(
+            types.Content(role="user", parts=[types.Part(text=msg)])
         )
 
-        # Adiciona mensagem do usuário ao histórico
-        historicos[sid].append({
-            "role": "user",
-            "parts": [msg]
-        })
+        # Chama a nova SDK google-genai com histórico e system prompt
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=historicos[sid],
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.8,
+            ),
+        )
 
-        # Inicia chat com o histórico anterior (sem a última mensagem)
-        chat_session = model.start_chat(history=historicos[sid][:-1])
-
-        # Envia a mensagem atual
-        response = chat_session.send_message(msg)
         reply = response.text.strip()
 
         # Salva resposta do modelo no histórico
-        historicos[sid].append({
-            "role": "model",
-            "parts": [reply]
-        })
+        historicos[sid].append(
+            types.Content(role="model", parts=[types.Part(text=reply)])
+        )
 
         return jsonify({"reply": reply})
 
