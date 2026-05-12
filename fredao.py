@@ -1,62 +1,148 @@
 """
-╔══════════════════════════════════════════════╗
-║         FREDÃO  –  Sua IA Pessoal            ║
-║         Backend Flask + Google Gemini        ║
-╚══════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║         FREDÃO  –  Sua IA Pessoal                        ║
+║         Backend Flask + Google Gemini + Supabase         ║
+╚══════════════════════════════════════════════════════════╝
 
 Como usar:
-  1. pip install flask google-genai python-dotenv gunicorn
-  2. Crie um arquivo .env com: GEMINI_API_KEY=sua_chave_aqui
-     Obtenha grátis em: https://aistudio.google.com/app/apikey
+  1. pip install flask google-genai python-dotenv gunicorn supabase
+  2. Crie um arquivo .env com:
+       GEMINI_API_KEY=sua_chave_gemini
+       SUPABASE_URL=https://xxxx.supabase.co
+       SUPABASE_KEY=sua_anon_key
   3. python fredao.py
   4. Abra http://127.0.0.1:8080 no navegador
 
-Para deploy no Render:
-  - Adicione GEMINI_API_KEY como variável de ambiente no painel do Render
-  - Nunca suba o .env para o GitHub!
+Como obter SUPABASE_URL e SUPABASE_KEY:
+  - No painel do Supabase, vá em Project Settings → API
+  - Copie a "Project URL" e a "anon public" key
 """
 
 from flask import Flask, request, jsonify, session
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-import uuid, os
+from supabase import create_client, Client
+import uuid, os, re
 
 # ═══════════════════════════════════════════════
 #  CONFIGURAÇÃO
 # ═══════════════════════════════════════════════
-load_dotenv()  # carrega o .env localmente (ignorado no Render)
+load_dotenv()
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "")
-MODEL   = "gemini-2.5-flash"
-PORT    = int(os.environ.get("PORT", 8080))
+API_KEY       = os.environ.get("GEMINI_API_KEY", "")
+SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
+MODEL         = "gemini-2.5-flash"
+PORT          = int(os.environ.get("PORT", 8080))
 # ═══════════════════════════════════════════════
 
 if not API_KEY:
-    raise RuntimeError(
-        "GEMINI_API_KEY não encontrada!\n"
-        "Local: crie um arquivo .env com GEMINI_API_KEY=sua_chave\n"
-        "Render: adicione a variável de ambiente no painel"
-    )
+    raise RuntimeError("GEMINI_API_KEY não encontrada! Verifique seu .env")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_URL ou SUPABASE_KEY não encontradas! Verifique seu .env")
 
+# ─── Conecta ao Supabase ──────────────────────
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ─── Função de consulta de tarifa ────────────
+def consultar_tarifa(destino: str) -> dict | None:
+    """
+    Busca a tarifa para um destino (código IATA) na tabela_latam.
+    Retorna dict com os dados ou None se não encontrar.
+    """
+    destino = destino.strip().upper()
+    try:
+        resp = (
+            supabase.table("tabela_latam")
+            .select('"DESTINO","TARIFA","TF_M_N_","BASE","RAIO"')
+            .eq('"DESTINO"', destino)
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            return resp.data[0]
+        return None
+    except Exception as e:
+        print(f"[Supabase] Erro ao consultar destino '{destino}': {e}")
+        return None
+
+def listar_destinos() -> list[str]:
+    """Retorna lista de todos os destinos disponíveis."""
+    try:
+        resp = (
+            supabase.table("tabela_latam")
+            .select('"DESTINO"')
+            .order('"DESTINO"')
+            .execute()
+        )
+        return [r["DESTINO"] for r in resp.data if r.get("DESTINO")]
+    except Exception as e:
+        print(f"[Supabase] Erro ao listar destinos: {e}")
+        return []
+
+def extrair_codigo_iata(texto: str) -> str | None:
+    """
+    Tenta extrair um código IATA (3 letras maiúsculas) do texto.
+    Ex: "quero cotação para GRU" → "GRU"
+    """
+    texto_upper = texto.upper()
+    # Procura por sequência de exatamente 3 letras isoladas (código IATA)
+    matches = re.findall(r'\b([A-Z]{3})\b', texto_upper)
+    # Filtra palavras comuns que não são IATA
+    ignorar = {"POR", "UMA", "NAO", "SIM", "KGS", "KGM", "VIA", "CEP", "DIA",
+               "MES", "ANO", "COM", "SEM", "TAL", "DOS", "DAS", "OLA", "BOA",
+               "BOO", "ATE", "ATÉ", "TEM", "FAZ", "FAR", "FUI", "VOU", "VEM"}
+    for m in matches:
+        if m not in ignorar:
+            return m
+    return None
+
+def detectar_intencao_cotacao(texto: str) -> bool:
+    """
+    Detecta se o usuário está pedindo uma cotação/coleta de frete.
+    """
+    palavras_chave = [
+        "cotação", "cotacao", "cota", "frete", "coleta", "tarifa",
+        "quanto custa", "preço", "preco", "valor", "envio", "enviar",
+        "despacho", "transportar", "latam cargo", "latam", "aeroporto",
+        "destino", "quero enviar", "preciso enviar", "quanto fica"
+    ]
+    texto_lower = texto.lower()
+    return any(p in texto_lower for p in palavras_chave)
+
+# ─── System Prompt ────────────────────────────
 SYSTEM_PROMPT = """
-Você é o FREDÃO, uma IA simpática, inteligente e bem-humorada criada para ajudar o seu usuário.
+Você é o FREDÃO, uma IA simpática, inteligente e bem-humorada criada para ajudar o usuário — especialmente em logística e cotações de frete LATAM Cargo.
+
+REGRAS GERAIS:
 - Fala de forma natural, como um amigo próximo, mas sem perder a inteligência.
 - Responde perguntas técnicas, cotidianas, criativas ou filosóficas com igual disposição.
 - Usa um toque de bom humor sem exagerar.
 - É direto quando necessário, mas sempre gentil.
 - Se apresenta como "FREDÃO" quando perguntado sobre quem é.
 - Responde sempre em português do Brasil, a menos que o usuário escreva em outro idioma.
+
+REGRAS DE COTAÇÃO DE FRETE:
+- Quando o usuário pedir cotação de coleta/frete, você DEVE usar os dados que o sistema já consultou automaticamente.
+- Os dados virão no formato: [DADOS_TARIFA: {...}] no início da mensagem do sistema.
+- Quando receber esses dados, apresente a cotação de forma clara e amigável, incluindo:
+  • Destino (código IATA)
+  • Tarifa por kg (campo TARIFA)
+  • Tarifa mínima (campo TF_M_N_)
+  • Aeroporto base de origem (campo BASE)
+  • Número do raio (campo RAIO)
+- Se o destino não for encontrado, diga que não atende aquele destino e sugira que o usuário verifique o código IATA.
+- Se o usuário não informar o destino, pergunte o código IATA ou cidade de destino.
+- Lembre o usuário que os valores são por kg e que a tarifa mínima se aplica para envios abaixo do peso mínimo.
+
 Lembre-se: você é o FREDÃO — confiante, prestativo e com personalidade própria!
 """.strip()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", os.urandom(24))
 
-# ─── Configura o Gemini (nova SDK google-genai) ───
 client = genai.Client(api_key=API_KEY)
-
-# Históricos por sessão: { sid: [types.Content(...)] }
 historicos: dict = {}
 
 # ─── HTML embutido ────────────────────────────
@@ -146,7 +232,7 @@ html,body{height:100%;font-family:var(--fn);background:var(--bg);color:var(--tx)
   <aside class="sidebar" id="sidebar">
     <div class="sh">
       <div class="lm">&#x1F916;</div>
-      <div><div class="lt">FREDÃO</div><div class="ls">Powered by Gemini</div></div>
+      <div><div class="lt">FREDÃO</div><div class="ls">Powered by Gemini + Supabase</div></div>
     </div>
     <button class="ncb" onclick="newChat()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -157,7 +243,7 @@ html,body{height:100%;font-family:var(--fn);background:var(--bg);color:var(--tx)
       <div class="ib">
         &#x1F512; <strong>API Key protegida</strong><br>
         Sua chave fica apenas no servidor Python.<br><br>
-        &#x1F9E0; Modelo ativo:<br>
+        &#x1F4E6; Base LATAM conectada<br>
         <span class="mbadge" id="mdlbadge">carregando...</span>
       </div>
     </div>
@@ -177,28 +263,28 @@ html,body{height:100%;font-family:var(--fn);background:var(--bg);color:var(--tx)
       <div class="es" id="es">
         <div class="bi">&#x1F916;</div>
         <h2>Olá! Eu sou o FREDÃO</h2>
-        <p>Sua IA pessoal com personalidade, agora movido pelo Google Gemini — grátis!</p>
+        <p>Sua IA pessoal com acesso à tabela de tarifas LATAM Cargo em tempo real!</p>
         <div class="sugs">
-          <span class="pill" onclick="sug(this)">&#x1F4A1; O que é inteligência artificial?</span>
-          <span class="pill" onclick="sug(this)">&#x1F4DD; Escreve um e-mail profissional</span>
-          <span class="pill" onclick="sug(this)">&#x1F9E0; Me dá 5 ideias de negócio</span>
+          <span class="pill" onclick="sug(this)">✈️ Cotação para GRU</span>
+          <span class="pill" onclick="sug(this)">✈️ Quanto custa frete para SSA?</span>
+          <span class="pill" onclick="sug(this)">✈️ Quero enviar carga para REC</span>
+          <span class="pill" onclick="sug(this)">📋 Quais destinos vocês atendem?</span>
+          <span class="pill" onclick="sug(this)">&#x1F4A1; O que é código IATA?</span>
           <span class="pill" onclick="sug(this)">&#x1F602; Conta uma piada boa</span>
-          <span class="pill" onclick="sug(this)">&#x1F40D; Como aprender Python do zero?</span>
-          <span class="pill" onclick="sug(this)">&#x1F30D; Qual a capital da Austrália?</span>
         </div>
       </div>
     </div>
 
     <div class="ia">
       <div class="ibox">
-        <textarea id="ui" rows="1" placeholder="Escreva sua mensagem para o FREDÃO..."></textarea>
+        <textarea id="ui" rows="1" placeholder="Ex: Quero cotação para GRU ou quanto custa para SSA?"></textarea>
         <button class="sbtn" id="sbtn" onclick="send()" title="Enviar (Enter)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
         </button>
       </div>
-      <div class="ifoot">Backend Python + Flask &nbsp;&middot;&nbsp; Google Gemini (gratuito) &nbsp;&middot;&nbsp; Shift+Enter para nova linha</div>
+      <div class="ifoot">FREDÃO + LATAM Cargo &nbsp;&middot;&nbsp; Google Gemini &nbsp;&middot;&nbsp; Supabase &nbsp;&middot;&nbsp; Shift+Enter para nova linha</div>
     </div>
   </main>
 </div>
@@ -207,7 +293,7 @@ html,body{height:100%;font-family:var(--fn);background:var(--bg);color:var(--tx)
 var busy=false, sessions=JSON.parse(localStorage.getItem('frs')||'[]'), cidx=null;
 
 fetch('/info').then(function(r){return r.json()}).then(function(d){
-  document.getElementById('mdlbadge').textContent=d.model;
+  document.getElementById('mdlbadge').textContent=d.model+' · '+d.destinos+' destinos';
 });
 
 var ta=document.getElementById('ui');
@@ -262,9 +348,9 @@ function fmt(t){
 
 function setLoading(s){
   busy=s;document.getElementById('sbtn').disabled=s;
-  document.getElementById('ts').textContent=s?'FREDÃO está pensando...':'Pronto para conversar';
+  document.getElementById('ts').textContent=s?'FREDÃO está consultando...':'Pronto para conversar';
   var sd=document.getElementById('sd'),stx=document.getElementById('stx');
-  if(s){sd.classList.add('loading');stx.textContent='Pensando...'}
+  if(s){sd.classList.add('loading');stx.textContent='Consultando...'}
   else{sd.classList.remove('loading');stx.textContent='Online'}
 }
 
@@ -272,11 +358,11 @@ async function newChat(){
   await fetch('/clear',{method:'POST'});cidx=null;
   var w=document.getElementById('msgs');w.innerHTML='';
   var es=document.createElement('div');es.className='es';es.id='es';
-  es.innerHTML='<div class="bi">&#x1F916;</div><h2>Olá! Eu sou o FREDÃO</h2><p>Pode me perguntar qualquer coisa!</p>'
+  es.innerHTML='<div class="bi">&#x1F916;</div><h2>Olá! Eu sou o FREDÃO</h2><p>Pode me perguntar qualquer coisa — inclusive cotações LATAM!</p>'
     +'<div class="sugs">'
-    +'<span class="pill" onclick="sug(this)">&#x1F4A1; O que é inteligência artificial?</span>'
-    +'<span class="pill" onclick="sug(this)">&#x1F4DD; Escreve um e-mail profissional</span>'
-    +'<span class="pill" onclick="sug(this)">&#x1F9E0; Me dá 5 ideias de negócio</span>'
+    +'<span class="pill" onclick="sug(this)">✈️ Cotação para GRU</span>'
+    +'<span class="pill" onclick="sug(this)">✈️ Quanto custa para SSA?</span>'
+    +'<span class="pill" onclick="sug(this)">📋 Quais destinos atendem?</span>'
     +'<span class="pill" onclick="sug(this)">&#x1F602; Conta uma piada boa</span>'
     +'</div>';
   w.appendChild(es);ta.focus();closeSB();
@@ -319,7 +405,8 @@ def index():
 
 @app.route("/info")
 def info():
-    return jsonify({"model": MODEL})
+    destinos = listar_destinos()
+    return jsonify({"model": MODEL, "destinos": len(destinos)})
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -332,13 +419,41 @@ def chat():
     if sid not in historicos:
         historicos[sid] = []
 
+    # ── Lógica de cotação: detecta intenção e consulta o Supabase ──
+    msg_para_gemini = msg
+    if detectar_intencao_cotacao(msg):
+        iata = extrair_codigo_iata(msg)
+        if iata:
+            tarifa = consultar_tarifa(iata)
+            if tarifa:
+                # Injeta os dados reais na mensagem antes de enviar ao Gemini
+                dados_str = (
+                    f"[DADOS_TARIFA: destino={tarifa.get('DESTINO')}, "
+                    f"tarifa_por_kg=R${tarifa.get('TARIFA')}, "
+                    f"tarifa_minima=R${tarifa.get('TF_M_N_')}, "
+                    f"base_origem={tarifa.get('BASE')}, "
+                    f"raio={tarifa.get('RAIO')}]"
+                )
+                msg_para_gemini = f"{dados_str}\n\nMensagem do usuário: {msg}"
+                print(f"[Cotação] {iata} → tarifa R${tarifa.get('TARIFA')}/kg")
+            else:
+                msg_para_gemini = (
+                    f"[DESTINO_NAO_ENCONTRADO: '{iata}' não existe na base LATAM]\n\n"
+                    f"Mensagem do usuário: {msg}"
+                )
+                print(f"[Cotação] Destino '{iata}' não encontrado na base")
+        else:
+            # Intenção detectada mas sem código IATA — pede ao Gemini que solicite
+            msg_para_gemini = (
+                f"[SEM_CODIGO_IATA: usuário quer cotação mas não informou o destino]\n\n"
+                f"Mensagem do usuário: {msg}"
+            )
+
     try:
-        # Adiciona mensagem do usuário ao histórico
         historicos[sid].append(
-            types.Content(role="user", parts=[types.Part(text=msg)])
+            types.Content(role="user", parts=[types.Part(text=msg_para_gemini)])
         )
 
-        # Chama a nova SDK google-genai com histórico e system prompt
         response = client.models.generate_content(
             model=MODEL,
             contents=historicos[sid],
@@ -350,7 +465,6 @@ def chat():
 
         reply = response.text.strip()
 
-        # Salva resposta do modelo no histórico
         historicos[sid].append(
             types.Content(role="model", parts=[types.Part(text=reply)])
         )
@@ -358,7 +472,6 @@ def chat():
         return jsonify({"reply": reply})
 
     except Exception as e:
-        # Remove a última mensagem do usuário em caso de erro
         if historicos.get(sid):
             historicos[sid].pop()
         return jsonify({"error": str(e)}), 500
@@ -371,10 +484,14 @@ def clear():
 
 # ─── ENTRY POINT ──────────────────────────────
 if __name__ == "__main__":
-    print("\n" + "="*45)
-    print("  FREDAO esta online! (Google Gemini)")
+    destinos = listar_destinos()
+    print("\n" + "="*50)
+    print("  FREDÃO está online! (Gemini + Supabase)")
     print("  Acesse: http://127.0.0.1:" + str(PORT))
     print("  Modelo: " + MODEL)
+    print(f"  Base LATAM: {len(destinos)} destinos carregados")
+    if destinos:
+        print("  Destinos: " + ", ".join(destinos[:10]) + "...")
     print("  Para encerrar: Ctrl+C")
-    print("="*45 + "\n")
+    print("="*50 + "\n")
     app.run(host="0.0.0.0", port=PORT, debug=True)
