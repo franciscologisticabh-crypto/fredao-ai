@@ -2,8 +2,8 @@
 ╔══════════════════════════════════════════════════════════╗
 ║         FREDÃO  –  Sua IA Pessoal                        ║
 ║         Backend Flask + Google Gemini + Supabase         ║
+║         Base: nova_base (consulta por CEP)               ║
 ╚══════════════════════════════════════════════════════════╝
-
 Como usar:
   1. pip install flask google-genai python-dotenv gunicorn supabase
   2. Crie um arquivo .env com:
@@ -12,12 +12,7 @@ Como usar:
        SUPABASE_KEY=sua_anon_key
   3. python fredao.py
   4. Abra http://127.0.0.1:8080 no navegador
-
-Como obter SUPABASE_URL e SUPABASE_KEY:
-  - No painel do Supabase, vá em Project Settings → API
-  - Copie a "Project URL" e a "anon public" key
 """
-
 from flask import Flask, request, jsonify, session
 from google import genai
 from google.genai import types
@@ -29,13 +24,11 @@ import uuid, os, re
 #  CONFIGURAÇÃO
 # ═══════════════════════════════════════════════
 load_dotenv()
-
 API_KEY       = os.environ.get("GEMINI_API_KEY", "")
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
 MODEL         = "gemini-2.5-flash"
 PORT          = int(os.environ.get("PORT", 8080))
-# ═══════════════════════════════════════════════
 
 if not API_KEY:
     raise RuntimeError("GEMINI_API_KEY não encontrada! Verifique seu .env")
@@ -45,75 +38,194 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 # ─── Conecta ao Supabase ──────────────────────
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ─── Função de consulta de tarifa ────────────
-def consultar_tarifa(destino: str) -> dict | None:
-    """
-    Busca a tarifa para um destino (código IATA) na tabela_latam.
-    Retorna dict com os dados ou None se não encontrar.
-    """
-    destino = destino.strip().upper()
-    try:
-        resp = (
-            supabase.table("tabela_latam")
-            .select('"DESTINO","TARIFA","TF_M_N_","BASE","RAIO"')
-            .eq('"DESTINO"', destino)
-            .limit(1)
-            .execute()
-        )
-        if resp.data:
-            return resp.data[0]
-        return None
-    except Exception as e:
-        print(f"[Supabase] Erro ao consultar destino '{destino}': {e}")
-        return None
+# ═══════════════════════════════════════════════
+#  FUNÇÕES DE CONSULTA  –  nova_base
+# ═══════════════════════════════════════════════
 
-def listar_destinos() -> list[str]:
-    """Retorna lista de todos os destinos disponíveis."""
+def consultar_por_cep(cep: str) -> list[dict]:
+    """
+    Busca cobertura e valores para um CEP na nova_base.
+    Aceita CEP com ou sem traço (ex: '01310-100' ou '01310100').
+    Retorna lista de dicts (pode ter LATAM e/ou AZUL) ou lista vazia.
+    """
+    cep_limpo = re.sub(r'\D', '', cep.strip())
+    if len(cep_limpo) != 8:
+        return []
     try:
+        cep_int = int(cep_limpo)
         resp = (
-            supabase.table("tabela_latam")
-            .select('"DESTINO"')
-            .order('"DESTINO"')
+            supabase.table("nova_base")
+            .select(
+                "transportadora,base,cidade,uf,tipo_entrega,"
+                "prazo_entrega,envio_kit,envio_receptor,"
+                "envio_acessorios,coleta,entrega,st"
+            )
+            .lte("cep_inicial", cep_int)
+            .gte("cep_final",   cep_int)
+            .order("prazo_entrega")
             .execute()
         )
-        return [r["DESTINO"] for r in resp.data if r.get("DESTINO")]
+        return resp.data if resp.data else []
     except Exception as e:
-        print(f"[Supabase] Erro ao listar destinos: {e}")
+        print(f"[Supabase] Erro ao consultar CEP '{cep_limpo}': {e}")
         return []
 
-def extrair_codigo_iata(texto: str) -> str | None:
+
+def consultar_por_cidade(cidade: str, uf: str | None = None) -> list[dict]:
     """
-    Tenta extrair um código IATA (3 letras maiúsculas) do texto.
-    Ex: "quero cotação para GRU" → "GRU"
+    Busca cobertura por nome de cidade (e opcionalmente UF).
+    Retorna lista de registros únicos por transportadora/base.
     """
-    texto_upper = texto.upper()
-    # Procura por sequência de exatamente 3 letras isoladas (código IATA)
-    matches = re.findall(r'\b([A-Z]{3})\b', texto_upper)
-    # Filtra palavras comuns que não são IATA
-    ignorar = {"POR", "UMA", "NAO", "SIM", "KGS", "KGM", "VIA", "CEP", "DIA",
-               "MES", "ANO", "COM", "SEM", "TAL", "DOS", "DAS", "OLA", "BOA",
-               "BOO", "ATE", "ATÉ", "TEM", "FAZ", "FAR", "FUI", "VOU", "VEM"}
+    cidade = cidade.strip().upper()
+    try:
+        q = (
+            supabase.table("nova_base")
+            .select(
+                "transportadora,base,cidade,uf,tipo_entrega,"
+                "prazo_entrega,envio_kit,envio_receptor,"
+                "envio_acessorios,coleta,entrega,st"
+            )
+            .ilike("cidade", f"%{cidade}%")
+        )
+        if uf:
+            q = q.eq("uf", uf.strip().upper())
+        resp = q.order("prazo_entrega").limit(10).execute()
+        if not resp.data:
+            return []
+        # Deduplica por transportadora+base
+        seen = set()
+        result = []
+        for r in resp.data:
+            key = (r.get("transportadora"), r.get("base"), r.get("uf"))
+            if key not in seen:
+                seen.add(key)
+                result.append(r)
+        return result
+    except Exception as e:
+        print(f"[Supabase] Erro ao consultar cidade '{cidade}': {e}")
+        return []
+
+
+def listar_bases() -> list[str]:
+    """Retorna lista de bases (aeroportos) disponíveis."""
+    try:
+        resp = (
+            supabase.table("nova_base")
+            .select("base,cidade,uf")
+            .order("base")
+            .execute()
+        )
+        seen = set()
+        result = []
+        for r in resp.data:
+            key = r.get("base")
+            if key and key not in seen:
+                seen.add(key)
+                result.append(f"{r['base']} – {r.get('cidade','?')}/{r.get('uf','?')}")
+        return result
+    except Exception as e:
+        print(f"[Supabase] Erro ao listar bases: {e}")
+        return []
+
+
+def contar_registros() -> int:
+    """Conta total de registros na nova_base."""
+    try:
+        resp = supabase.table("nova_base").select("id", count="exact").execute()
+        return resp.count or 0
+    except Exception:
+        return 0
+
+# ═══════════════════════════════════════════════
+#  DETECÇÃO DE INTENÇÃO E EXTRAÇÃO
+# ═══════════════════════════════════════════════
+
+def extrair_cep(texto: str) -> str | None:
+    """Extrai um CEP válido (8 dígitos) do texto."""
+    matches = re.findall(r'\b\d{5}-?\d{3}\b', texto)
     for m in matches:
-        if m not in ignorar:
-            return m
+        limpo = re.sub(r'\D', '', m)
+        if len(limpo) == 8:
+            return limpo
     return None
 
-def detectar_intencao_cotacao(texto: str) -> bool:
+
+def extrair_cidade_uf(texto: str) -> tuple[str | None, str | None]:
     """
-    Detecta se o usuário está pedindo uma cotação/coleta de frete.
+    Tenta extrair cidade e UF do texto.
+    Ex: 'frete para São Paulo SP' → ('São Paulo', 'SP')
     """
-    palavras_chave = [
+    texto_upper = texto.upper()
+    # Detecta UF no final (ex: "SP", "RJ", "MG"...)
+    ufs = [
+        "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT",
+        "PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"
+    ]
+    uf_encontrada = None
+    for uf in ufs:
+        if re.search(rf'\b{uf}\b', texto_upper):
+            uf_encontrada = uf
+            break
+
+    # Palavras que indicam destino
+    destino_pattern = re.search(
+        r'(?:para|destino|cidade|em|frete\s+(?:para|até))\s+([A-Za-zÀ-ú\s]{3,30})',
+        texto, re.IGNORECASE
+    )
+    cidade = None
+    if destino_pattern:
+        cidade = destino_pattern.group(1).strip()
+        # Remove a UF do nome se estiver colada
+        if uf_encontrada:
+            cidade = re.sub(rf'\b{uf_encontrada}\b', '', cidade, flags=re.IGNORECASE).strip()
+        if len(cidade) < 3:
+            cidade = None
+
+    return cidade, uf_encontrada
+
+
+def detectar_intencao_coleta(texto: str) -> bool:
+    """Detecta se o usuário quer saber sobre coleta/frete/cobertura."""
+    palavras = [
         "cotação", "cotacao", "cota", "frete", "coleta", "tarifa",
         "quanto custa", "preço", "preco", "valor", "envio", "enviar",
-        "despacho", "transportar", "latam cargo", "latam", "aeroporto",
-        "destino", "quero enviar", "preciso enviar", "quanto fica"
+        "despacho", "transportar", "latam", "azul cargo", "aeroporto",
+        "destino", "quero enviar", "preciso enviar", "quanto fica",
+        "cep", "cobertura", "atende", "entrega", "prazo", "kit",
+        "receptor", "acessorio", "acessório"
     ]
     texto_lower = texto.lower()
-    return any(p in texto_lower for p in palavras_chave)
+    return any(p in texto_lower for p in palavras)
 
-# ─── System Prompt ────────────────────────────
+
+def formatar_resultados(dados: list[dict], origem: str) -> str:
+    """Formata os dados da consulta para injetar no prompt do Gemini."""
+    if not dados:
+        return f"[SEM_COBERTURA: nenhum resultado encontrado para '{origem}']"
+
+    linhas = [f"[DADOS_COBERTURA para '{origem}':"]
+    for i, r in enumerate(dados, 1):
+        coleta_txt = "✅ Sim" if r.get("coleta") == "Y" else "❌ Não"
+        entrega_txt = "✅ Sim" if r.get("entrega") == "Y" else "❌ Não"
+        linhas.append(
+            f"  Opção {i}: {r.get('transportadora')} | Base: {r.get('base')} | "
+            f"Cidade: {r.get('cidade')}/{r.get('uf')} | "
+            f"Tipo: {r.get('tipo_entrega')} | Prazo: {r.get('prazo_entrega')} dias úteis | "
+            f"Coleta: {coleta_txt} | Entrega: {entrega_txt} | "
+            f"Envio Kit: R${r.get('envio_kit')} | "
+            f"Envio Receptor: R${r.get('envio_receptor')} | "
+            f"Envio Acessórios: R${r.get('envio_acessorios')} | "
+            f"ST: {r.get('st')}"
+        )
+    linhas.append("]")
+    return "\n".join(linhas)
+
+
+# ═══════════════════════════════════════════════
+#  SYSTEM PROMPT
+# ═══════════════════════════════════════════════
 SYSTEM_PROMPT = """
-Você é o FREDÃO, uma IA simpática, inteligente e bem-humorada criada para ajudar o usuário — especialmente em logística e cotações de frete LATAM Cargo.
+Você é o FREDÃO, uma IA simpática, inteligente e bem-humorada criada para ajudar o usuário — especialmente em logística e cotações de frete (LATAM Cargo e Azul Cargo).
 
 REGRAS GERAIS:
 - Fala de forma natural, como um amigo próximo, mas sem perder a inteligência.
@@ -123,25 +235,33 @@ REGRAS GERAIS:
 - Se apresenta como "FREDÃO" quando perguntado sobre quem é.
 - Responde sempre em português do Brasil, a menos que o usuário escreva em outro idioma.
 
-REGRAS DE COTAÇÃO DE FRETE:
-- Quando o usuário pedir cotação de coleta/frete, você DEVE usar os dados que o sistema já consultou automaticamente.
-- Os dados virão no formato: [DADOS_TARIFA: {...}] no início da mensagem do sistema.
-- Quando receber esses dados, apresente a cotação de forma clara e amigável, incluindo:
-  • Destino (código IATA)
-  • Tarifa por kg (campo TARIFA)
-  • Tarifa mínima (campo TF_M_N_)
-  • Aeroporto base de origem (campo BASE)
-  • Número do raio (campo RAIO)
-- Se o destino não for encontrado, diga que não atende aquele destino e sugira que o usuário verifique o código IATA.
-- Se o usuário não informar o destino, pergunte o código IATA ou cidade de destino.
-- Lembre o usuário que os valores são por kg e que a tarifa mínima se aplica para envios abaixo do peso mínimo.
+REGRAS DE CONSULTA DE FRETE/COBERTURA:
+- Quando receber dados no formato [DADOS_COBERTURA: ...], apresente as informações de forma clara e amigável.
+- Mostre TODAS as opções disponíveis (pode haver LATAM e Azul para o mesmo CEP).
+- Para cada opção, destaque:
+  • Transportadora
+  • Cidade/UF e Base de atendimento
+  • Tipo de entrega (D2D = porta a porta, ST = terminal)
+  • Prazo de entrega em dias úteis
+  • Se faz coleta (Y = sim, N = não)
+  • Valores: Envio Kit, Envio Receptor, Envio Acessórios
+- Se receber [SEM_COBERTURA: ...], informe que aquela região não é atendida e sugira tentar um CEP próximo ou entrar em contato com a equipe comercial.
+- Se receber [CEP_INVALIDO], peça um CEP válido com 8 dígitos.
+- Se receber [SEM_CEP_OU_CIDADE], pergunte o CEP ou cidade de destino.
+
+IMPORTANTE:
+- Os valores de envio são fixos por tipo de item (Kit, Receptor, Acessórios), não por kg.
+- D2D = coleta e entrega na porta. ST = entrega no terminal/aeroporto.
+- Prazo em dias úteis a partir da coleta.
 
 Lembre-se: você é o FREDÃO — confiante, prestativo e com personalidade própria!
 """.strip()
 
+# ═══════════════════════════════════════════════
+#  FLASK APP
+# ═══════════════════════════════════════════════
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", os.urandom(24))
-
 client = genai.Client(api_key=API_KEY)
 historicos: dict = {}
 
@@ -232,7 +352,7 @@ html,body{height:100%;font-family:var(--fn);background:var(--bg);color:var(--tx)
   <aside class="sidebar" id="sidebar">
     <div class="sh">
       <div class="lm">&#x1F916;</div>
-      <div><div class="lt">FREDÃO</div><div class="ls">Powered by Gemini + Supabase</div></div>
+      <div><div class="lt">FREDÃO</div><div class="ls">LATAM + Azul Cargo · Supabase</div></div>
     </div>
     <button class="ncb" onclick="newChat()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -243,12 +363,11 @@ html,body{height:100%;font-family:var(--fn);background:var(--bg);color:var(--tx)
       <div class="ib">
         &#x1F512; <strong>API Key protegida</strong><br>
         Sua chave fica apenas no servidor Python.<br><br>
-        &#x1F4E6; Base LATAM conectada<br>
+        &#x1F4E6; Base LATAM + Azul conectada<br>
         <span class="mbadge" id="mdlbadge">carregando...</span>
       </div>
     </div>
   </aside>
-
   <main class="main">
     <div class="tb">
       <button class="hb" onclick="toggleSB()">
@@ -258,48 +377,41 @@ html,body{height:100%;font-family:var(--fn);background:var(--bg);color:var(--tx)
       <button class="clrbtn" onclick="newChat()">&#x1F5D1; Limpar</button>
       <div class="spill"><div class="sdot" id="sd"></div><span id="stx">Online</span></div>
     </div>
-
     <div class="msgs" id="msgs">
       <div class="es" id="es">
         <div class="bi">&#x1F916;</div>
         <h2>Olá! Eu sou o FREDÃO</h2>
-        <p>Sua IA pessoal com acesso à tabela de tarifas LATAM Cargo em tempo real!</p>
+        <p>Consulte cobertura e valores de frete LATAM Cargo e Azul Cargo pelo CEP!</p>
         <div class="sugs">
-          <span class="pill" onclick="sug(this)">✈️ Cotação para GRU</span>
-          <span class="pill" onclick="sug(this)">✈️ Quanto custa frete para SSA?</span>
-          <span class="pill" onclick="sug(this)">✈️ Quero enviar carga para REC</span>
-          <span class="pill" onclick="sug(this)">📋 Quais destinos vocês atendem?</span>
-          <span class="pill" onclick="sug(this)">&#x1F4A1; O que é código IATA?</span>
-          <span class="pill" onclick="sug(this)">&#x1F602; Conta uma piada boa</span>
+          <span class="pill" onclick="sug(this)">📦 Cobertura para o CEP 01310-100</span>
+          <span class="pill" onclick="sug(this)">✈️ Tem coleta em Aracaju?</span>
+          <span class="pill" onclick="sug(this)">📋 Quais cidades vocês atendem?</span>
+          <span class="pill" onclick="sug(this)">💡 O que é entrega D2D?</span>
+          <span class="pill" onclick="sug(this)">😂 Conta uma piada boa</span>
         </div>
       </div>
     </div>
-
     <div class="ia">
       <div class="ibox">
-        <textarea id="ui" rows="1" placeholder="Ex: Quero cotação para GRU ou quanto custa para SSA?"></textarea>
+        <textarea id="ui" rows="1" placeholder="Ex: Tem cobertura para o CEP 01310-100? ou frete para Aracaju SE"></textarea>
         <button class="sbtn" id="sbtn" onclick="send()" title="Enviar (Enter)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
         </button>
       </div>
-      <div class="ifoot">FREDÃO + LATAM Cargo &nbsp;&middot;&nbsp; Google Gemini &nbsp;&middot;&nbsp; Supabase &nbsp;&middot;&nbsp; Shift+Enter para nova linha</div>
+      <div class="ifoot">FREDÃO · LATAM + Azul Cargo &nbsp;&middot;&nbsp; Google Gemini &nbsp;&middot;&nbsp; Supabase &nbsp;&middot;&nbsp; Shift+Enter para nova linha</div>
     </div>
   </main>
 </div>
-
 <script>
 var busy=false, sessions=JSON.parse(localStorage.getItem('frs')||'[]'), cidx=null;
-
 fetch('/info').then(function(r){return r.json()}).then(function(d){
-  document.getElementById('mdlbadge').textContent=d.model+' · '+d.destinos+' destinos';
+  document.getElementById('mdlbadge').textContent=d.model+' · '+d.registros+' coberturas';
 });
-
 var ta=document.getElementById('ui');
 ta.addEventListener('input',function(){ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,200)+'px'});
 ta.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
-
 async function send(){
   if(busy)return;
   var txt=ta.value.trim();if(!txt)return;
@@ -314,7 +426,6 @@ async function send(){
   }catch(e){tr.remove();addMsg('fredao','Erro: '+e.message)}
   setLoading(false);
 }
-
 function addMsg(role,content){
   var w=document.getElementById('msgs');
   var row=document.createElement('div');row.className='mr '+role;
@@ -325,7 +436,6 @@ function addMsg(role,content){
   mw.appendChild(bn);mw.appendChild(bb);row.appendChild(av);row.appendChild(mw);w.appendChild(row);
   w.scrollTop=w.scrollHeight;
 }
-
 function addTyping(){
   var w=document.getElementById('msgs');
   var row=document.createElement('div');row.className='mr fredao';
@@ -336,7 +446,6 @@ function addTyping(){
   mw.appendChild(bn);mw.appendChild(ty);row.appendChild(av);row.appendChild(mw);w.appendChild(row);
   w.scrollTop=w.scrollHeight;return row;
 }
-
 function fmt(t){
   return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/```[\w]*\n?([\s\S]*?)```/g,function(_,c){return '<pre><code>'+c.trim()+'</code></pre>'})
@@ -345,7 +454,6 @@ function fmt(t){
     .replace(/\*(.+?)\*/g,'<em>$1</em>')
     .replace(/\n/g,'<br>');
 }
-
 function setLoading(s){
   busy=s;document.getElementById('sbtn').disabled=s;
   document.getElementById('ts').textContent=s?'FREDÃO está consultando...':'Pronto para conversar';
@@ -353,25 +461,22 @@ function setLoading(s){
   if(s){sd.classList.add('loading');stx.textContent='Consultando...'}
   else{sd.classList.remove('loading');stx.textContent='Online'}
 }
-
 async function newChat(){
   await fetch('/clear',{method:'POST'});cidx=null;
   var w=document.getElementById('msgs');w.innerHTML='';
   var es=document.createElement('div');es.className='es';es.id='es';
-  es.innerHTML='<div class="bi">&#x1F916;</div><h2>Olá! Eu sou o FREDÃO</h2><p>Pode me perguntar qualquer coisa — inclusive cotações LATAM!</p>'
+  es.innerHTML='<div class="bi">&#x1F916;</div><h2>Olá! Eu sou o FREDÃO</h2><p>Consulte cobertura de frete LATAM + Azul Cargo por CEP ou cidade!</p>'
     +'<div class="sugs">'
-    +'<span class="pill" onclick="sug(this)">✈️ Cotação para GRU</span>'
-    +'<span class="pill" onclick="sug(this)">✈️ Quanto custa para SSA?</span>'
-    +'<span class="pill" onclick="sug(this)">📋 Quais destinos atendem?</span>'
-    +'<span class="pill" onclick="sug(this)">&#x1F602; Conta uma piada boa</span>'
+    +'<span class="pill" onclick="sug(this)">📦 CEP 01310-100</span>'
+    +'<span class="pill" onclick="sug(this)">✈️ Tem coleta em Aracaju?</span>'
+    +'<span class="pill" onclick="sug(this)">📋 Quais cidades atendem?</span>'
+    +'<span class="pill" onclick="sug(this)">😂 Conta uma piada boa</span>'
     +'</div>';
   w.appendChild(es);ta.focus();closeSB();
 }
-
 function sug(el){
   ta.value=el.textContent.replace(/^\S+\s/,'');send();
 }
-
 function saveSess(msg){
   if(cidx===null){
     sessions.unshift({title:msg.slice(0,46)});cidx=0;
@@ -387,7 +492,6 @@ function renderH(){
     d.textContent='💬 '+s.title;el.appendChild(d);
   });
 }
-
 function toggleSB(){document.getElementById('sidebar').classList.toggle('open')}
 function closeSB(){document.getElementById('sidebar').classList.remove('open')}
 renderH();
@@ -396,7 +500,6 @@ renderH();
 </html>"""
 
 # ─── ROTAS ────────────────────────────────────
-
 @app.route("/")
 def index():
     if "sid" not in session:
@@ -405,8 +508,8 @@ def index():
 
 @app.route("/info")
 def info():
-    destinos = listar_destinos()
-    return jsonify({"model": MODEL, "destinos": len(destinos)})
+    total = contar_registros()
+    return jsonify({"model": MODEL, "registros": total})
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -419,41 +522,46 @@ def chat():
     if sid not in historicos:
         historicos[sid] = []
 
-    # ── Lógica de cotação: detecta intenção e consulta o Supabase ──
+    # ── Lógica de consulta: detecta intenção e busca no Supabase ──
     msg_para_gemini = msg
-    if detectar_intencao_cotacao(msg):
-        iata = extrair_codigo_iata(msg)
-        if iata:
-            tarifa = consultar_tarifa(iata)
-            if tarifa:
-                # Injeta os dados reais na mensagem antes de enviar ao Gemini
-                dados_str = (
-                    f"[DADOS_TARIFA: destino={tarifa.get('DESTINO')}, "
-                    f"tarifa_por_kg=R${tarifa.get('TARIFA')}, "
-                    f"tarifa_minima=R${tarifa.get('TF_M_N_')}, "
-                    f"base_origem={tarifa.get('BASE')}, "
-                    f"raio={tarifa.get('RAIO')}]"
-                )
-                msg_para_gemini = f"{dados_str}\n\nMensagem do usuário: {msg}"
-                print(f"[Cotação] {iata} → tarifa R${tarifa.get('TARIFA')}/kg")
+
+    if detectar_intencao_coleta(msg):
+        # Prioridade 1: CEP explícito
+        cep = extrair_cep(msg)
+        if cep:
+            dados = consultar_por_cep(cep)
+            if dados:
+                dados_str = formatar_resultados(dados, f"CEP {cep}")
+                print(f"[Consulta] CEP {cep} → {len(dados)} resultado(s)")
             else:
+                dados_str = f"[SEM_COBERTURA: CEP {cep} não encontrado na base]"
+                print(f"[Consulta] CEP {cep} → sem cobertura")
+            msg_para_gemini = f"{dados_str}\n\nMensagem do usuário: {msg}"
+
+        else:
+            # Prioridade 2: Cidade mencionada
+            cidade, uf = extrair_cidade_uf(msg)
+            if cidade:
+                dados = consultar_por_cidade(cidade, uf)
+                origem = f"{cidade}/{uf}" if uf else cidade
+                if dados:
+                    dados_str = formatar_resultados(dados, origem)
+                    print(f"[Consulta] Cidade '{origem}' → {len(dados)} resultado(s)")
+                else:
+                    dados_str = f"[SEM_COBERTURA: cidade '{origem}' não encontrada na base]"
+                    print(f"[Consulta] Cidade '{origem}' → sem cobertura")
+                msg_para_gemini = f"{dados_str}\n\nMensagem do usuário: {msg}"
+            else:
+                # Sem CEP nem cidade — pede ao Gemini que solicite
                 msg_para_gemini = (
-                    f"[DESTINO_NAO_ENCONTRADO: '{iata}' não existe na base LATAM]\n\n"
+                    "[SEM_CEP_OU_CIDADE: usuário quer consulta de frete mas não informou CEP nem cidade]\n\n"
                     f"Mensagem do usuário: {msg}"
                 )
-                print(f"[Cotação] Destino '{iata}' não encontrado na base")
-        else:
-            # Intenção detectada mas sem código IATA — pede ao Gemini que solicite
-            msg_para_gemini = (
-                f"[SEM_CODIGO_IATA: usuário quer cotação mas não informou o destino]\n\n"
-                f"Mensagem do usuário: {msg}"
-            )
 
     try:
         historicos[sid].append(
             types.Content(role="user", parts=[types.Part(text=msg_para_gemini)])
         )
-
         response = client.models.generate_content(
             model=MODEL,
             contents=historicos[sid],
@@ -462,15 +570,11 @@ def chat():
                 temperature=0.8,
             ),
         )
-
         reply = response.text.strip()
-
         historicos[sid].append(
             types.Content(role="model", parts=[types.Part(text=reply)])
         )
-
         return jsonify({"reply": reply})
-
     except Exception as e:
         if historicos.get(sid):
             historicos[sid].pop()
@@ -484,14 +588,15 @@ def clear():
 
 # ─── ENTRY POINT ──────────────────────────────
 if __name__ == "__main__":
-    destinos = listar_destinos()
-    print("\n" + "="*50)
-    print("  FREDÃO está online! (Gemini + Supabase)")
+    total = contar_registros()
+    bases = listar_bases()
+    print("\n" + "="*55)
+    print("  FREDÃO está online! (Gemini + Supabase · nova_base)")
     print("  Acesse: http://127.0.0.1:" + str(PORT))
     print("  Modelo: " + MODEL)
-    print(f"  Base LATAM: {len(destinos)} destinos carregados")
-    if destinos:
-        print("  Destinos: " + ", ".join(destinos[:10]) + "...")
+    print(f"  Base: {total} registros de cobertura por CEP")
+    if bases:
+        print("  Bases: " + ", ".join(b.split(" – ")[0] for b in bases[:10]) + "...")
     print("  Para encerrar: Ctrl+C")
-    print("="*50 + "\n")
+    print("="*55 + "\n")
     app.run(host="0.0.0.0", port=PORT, debug=True)
