@@ -1,3 +1,4 @@
+# fredao.py
 
 # =========================================================
 # FREDÃO ULTRA — FRONT PREMIUM + BACKEND INTELIGENTE
@@ -316,22 +317,34 @@ Você NÃO deve criar informações sozinho.
 
 HTML = r'''<!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
+
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>FREDÃO ULTRA</title>
+
+<title>FREDÃO</title>
+
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
 
 <style>
 
 :root{
-  --bg:#081028;
-  --card:#172033;
-  --card2:#1e293b;
-  --primary:#2563eb;
-  --border:#334155;
-  --text:#ffffff;
-  --muted:#94a3b8;
+
+    --bg:#081120;
+    --bg2:#0f172a;
+
+    --card:#172033;
+    --card2:#1e293b;
+
+    --primary:#2563eb;
+    --primary2:#1d4ed8;
+
+    --border:#334155;
+
+    --text:#ffffff;
+    --muted:#94a3b8;
+
 }
 
 *{
@@ -341,210 +354,561 @@ HTML = r'''<!DOCTYPE html>
 }
 
 body{
-    background:var(--bg);
+
+    background:
+        radial-gradient(circle at top,#12203f 0%,#081120 45%);
+
     color:var(--text);
+
     font-family:'Sora',sans-serif;
+
     height:100vh;
+
     overflow:hidden;
+
 }
 
 .shell{
+
     display:flex;
     height:100vh;
+
 }
 
 .sidebar{
-    width:260px;
-    background:#0f172a;
-    border-right:1px solid var(--border);
+
+    width:270px;
+
+    background:rgba(15,23,42,.95);
+
+    border-right:1px solid rgba(255,255,255,.06);
+
+    backdrop-filter:blur(20px);
+
     display:flex;
     flex-direction:column;
+
 }
 
 .logo{
-    padding:25px;
-    border-bottom:1px solid var(--border);
-    font-size:24px;
+
+    padding:30px;
+
+    border-bottom:1px solid rgba(255,255,255,.06);
+
+    font-size:28px;
+
     font-weight:700;
+
+    display:flex;
+    align-items:center;
+    gap:12px;
+
+}
+
+.logo-icon{
+
+    font-size:34px;
+
+    animation:floatRobot 3s ease-in-out infinite;
+
 }
 
 .newchat{
-    margin:15px;
-    padding:14px;
-    background:var(--card2);
+
+    margin:18px;
+
+    padding:16px;
+
+    background:linear-gradient(
+        135deg,
+        var(--primary),
+        var(--primary2)
+    );
+
     border:none;
-    border-radius:12px;
+
+    border-radius:16px;
+
     color:white;
+
     cursor:pointer;
+
     font-weight:600;
+
+    font-size:15px;
+
+    transition:.25s;
+
 }
 
 .newchat:hover{
-    background:#334155;
+
+    transform:translateY(-2px);
+
+    box-shadow:
+        0 10px 30px rgba(37,99,235,.35);
+
 }
 
 .main{
+
     flex:1;
+
     display:flex;
     flex-direction:column;
+
 }
 
 .topbar{
-    height:80px;
-    border-bottom:1px solid var(--border);
+
+    height:85px;
+
+    border-bottom:1px solid rgba(255,255,255,.06);
+
+    background:rgba(8,17,32,.75);
+
+    backdrop-filter:blur(20px);
+
     display:flex;
+
     align-items:center;
+
     justify-content:space-between;
-    padding:0 30px;
+
+    padding:0 35px;
+
 }
 
 .title{
-    font-size:22px;
+
+    font-size:24px;
+
     font-weight:700;
+
 }
 
 .status{
+
     color:#22c55e;
+
     font-size:14px;
+
+    display:flex;
+    align-items:center;
+    gap:8px;
+
+}
+
+.status-dot{
+
+    width:10px;
+    height:10px;
+
+    background:#22c55e;
+
+    border-radius:50%;
+
+    box-shadow:
+        0 0 12px #22c55e;
+
 }
 
 .chat{
+
     flex:1;
+
     overflow-y:auto;
-    padding:30px;
+
+    padding:40px;
+
+}
+
+.chat::-webkit-scrollbar{
+    width:8px;
+}
+
+.chat::-webkit-scrollbar-thumb{
+    background:#23304d;
+    border-radius:10px;
 }
 
 .row{
+
     display:flex;
-    margin-bottom:25px;
+
+    margin-bottom:28px;
+
+    animation:fadeIn .25s ease;
+
 }
 
 .row.user{
+
     justify-content:flex-end;
+
 }
 
 .bubble{
-    max-width:75%;
-    padding:18px;
-    border-radius:18px;
-    line-height:1.7;
+
+    max-width:78%;
+
+    padding:22px;
+
+    border-radius:22px;
+
+    line-height:1.8;
+
     font-size:14px;
+
     white-space:pre-wrap;
+
+    box-shadow:
+        0 8px 30px rgba(0,0,0,.25);
+
 }
 
 .bot .bubble{
-    background:var(--card);
-    border:1px solid var(--border);
+
+    background:rgba(23,32,51,.95);
+
+    border:1px solid rgba(255,255,255,.06);
+
 }
 
 .user .bubble{
-    background:var(--primary);
+
+    background:linear-gradient(
+        135deg,
+        var(--primary),
+        var(--primary2)
+    );
+
 }
 
 .input-area{
-    border-top:1px solid var(--border);
-    padding:20px;
+
+    padding:24px;
+
+    border-top:1px solid rgba(255,255,255,.06);
+
+    background:rgba(8,17,32,.85);
+
+    backdrop-filter:blur(20px);
+
 }
 
 .input-box{
-    background:var(--card);
-    border:1px solid var(--border);
-    border-radius:16px;
+
+    background:rgba(23,32,51,.95);
+
+    border:1px solid rgba(255,255,255,.06);
+
+    border-radius:22px;
+
     display:flex;
-    gap:10px;
-    padding:12px;
+
+    align-items:flex-end;
+
+    gap:14px;
+
+    padding:14px;
+
 }
 
 textarea{
+
     flex:1;
+
     background:transparent;
+
     border:none;
+
     resize:none;
+
     outline:none;
+
     color:white;
-    font-size:14px;
+
+    font-size:15px;
+
+    line-height:1.6;
+
     font-family:'Sora',sans-serif;
+
     max-height:180px;
+
+}
+
+textarea::placeholder{
+    color:#7b8ba8;
 }
 
 button.send{
-    background:var(--primary);
+
+    width:54px;
+    height:54px;
+
     border:none;
-    width:50px;
-    border-radius:12px;
+
+    border-radius:16px;
+
+    background:linear-gradient(
+        135deg,
+        var(--primary),
+        var(--primary2)
+    );
+
     color:white;
+
     cursor:pointer;
-    font-weight:bold;
+
+    font-size:18px;
+
+    transition:.25s;
+
 }
 
 button.send:hover{
-    background:#1d4ed8;
+
+    transform:scale(1.05);
+
+    box-shadow:
+        0 10px 25px rgba(37,99,235,.35);
+
 }
 
 .welcome{
+
     text-align:center;
-    margin-top:120px;
-    color:var(--muted);
+
+    margin-top:80px;
+
+}
+
+.robot-wrap{
+
+    position:relative;
+
+    width:170px;
+    height:170px;
+
+    margin:0 auto 30px auto;
+
+    display:flex;
+    align-items:center;
+    justify-content:center;
+
+}
+
+.robot{
+
+    position:relative;
+
+    z-index:2;
+
+    font-size:95px;
+
+    animation:floatRobot 3s ease-in-out infinite;
+
+    filter:
+        drop-shadow(0 0 15px rgba(37,99,235,.7))
+        drop-shadow(0 0 35px rgba(37,99,235,.5));
+
+}
+
+.robot-glow{
+
+    position:absolute;
+
+    width:120px;
+    height:120px;
+
+    border-radius:50%;
+
+    background:radial-gradient(
+        circle,
+        rgba(37,99,235,.45) 0%,
+        rgba(37,99,235,.15) 50%,
+        transparent 75%
+    );
+
+    animation:pulseGlow 2.5s infinite ease-in-out;
+
 }
 
 .welcome h1{
-    color:white;
-    margin-bottom:10px;
+
+    font-size:46px;
+
+    margin-bottom:16px;
+
+}
+
+.welcome p{
+
+    color:var(--muted);
+
+    font-size:18px;
+
+}
+
+@keyframes fadeIn{
+
+    from{
+        opacity:0;
+        transform:translateY(10px);
+    }
+
+    to{
+        opacity:1;
+        transform:translateY(0);
+    }
+
+}
+
+@keyframes floatRobot{
+
+    0%{
+        transform:translateY(0px);
+    }
+
+    50%{
+        transform:translateY(-12px);
+    }
+
+    100%{
+        transform:translateY(0px);
+    }
+
+}
+
+@keyframes pulseGlow{
+
+    0%{
+        transform:scale(1);
+        opacity:.7;
+    }
+
+    50%{
+        transform:scale(1.15);
+        opacity:1;
+    }
+
+    100%{
+        transform:scale(1);
+        opacity:.7;
+    }
+
+}
+
+@media(max-width:900px){
+
+    .sidebar{
+        display:none;
+    }
+
+    .bubble{
+        max-width:100%;
+    }
+
+    .chat{
+        padding:20px;
+    }
+
+    .welcome h1{
+        font-size:32px;
+    }
+
 }
 
 </style>
+
 </head>
+
 <body>
 
 <div class="shell">
 
-<div class="sidebar">
+    <div class="sidebar">
 
-<div class="logo">
-🚚 FREDÃO ULTRA
-</div>
+        <div class="logo">
 
-<button class="newchat" onclick="limpar()">
-+ Nova Conversa
-</button>
+            <div class="logo-icon">
+                🤖
+            </div>
 
-</div>
+            FREDÃO
 
-<div class="main">
+        </div>
 
-<div class="topbar">
-    <div class="title">FREDÃO ULTRA</div>
-    <div class="status">● Online</div>
-</div>
+        <button class="newchat" onclick="limpar()">
+            + Nova Conversa
+        </button>
 
-<div id="chat" class="chat">
+    </div>
 
-<div class="welcome">
-<h1>Olá! Eu sou o FREDÃO ULTRA</h1>
-<p>Especialista em fretes LATAM e Azul Cargo</p>
-</div>
+    <div class="main">
 
-</div>
+        <div class="topbar">
 
-<div class="input-area">
+            <div class="title">
+                FREDÃO
+            </div>
 
-<div class="input-box">
+            <div class="status">
 
-<textarea
-id="msg"
-placeholder="Digite sua mensagem..."
-rows="1"
-></textarea>
+                <div class="status-dot"></div>
 
-<button class="send" onclick="enviar()">
-➤
-</button>
+                Online
 
-</div>
+            </div>
 
-</div>
+        </div>
 
-</div>
+        <div id="chat" class="chat">
+
+            <div class="welcome">
+
+                <div class="robot-wrap">
+
+                    <div class="robot-glow"></div>
+
+                    <div class="robot">
+                        🤖
+                    </div>
+
+                </div>
+
+                <h1>Olá! Eu sou o FREDÃO</h1>
+
+                <p>
+                    Especialista em fretes LATAM e Azul Cargo
+                </p>
+
+            </div>
+
+        </div>
+
+        <div class="input-area">
+
+            <div class="input-box">
+
+                <textarea
+                    id="msg"
+                    placeholder="Digite sua mensagem..."
+                    rows="1"
+                ></textarea>
+
+                <button class="send" onclick="enviar()">
+                    ➤
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 
@@ -554,15 +918,22 @@ const input = document.getElementById("msg")
 const chat = document.getElementById("chat")
 
 input.addEventListener("input",()=>{
+
     input.style.height="auto"
-    input.style.height=Math.min(input.scrollHeight,180)+"px"
+
+    input.style.height=
+        Math.min(input.scrollHeight,180)+"px"
+
 })
 
 input.addEventListener("keydown",function(e){
 
     if(e.key === "Enter" && !e.shiftKey){
+
         e.preventDefault()
+
         enviar()
+
     }
 
 })
@@ -576,6 +947,7 @@ function addUser(text){
     `
 
     chat.scrollTop = chat.scrollHeight
+
 }
 
 function addBot(text){
@@ -587,6 +959,7 @@ function addBot(text){
     `
 
     chat.scrollTop = chat.scrollHeight
+
 }
 
 async function enviar(){
@@ -600,34 +973,45 @@ async function enviar(){
     addUser(texto)
 
     input.value = ""
-    input.style.height="auto"
 
-    addBot("FREDÃO está analisando...")
+    input.style.height = "auto"
 
-    const loadings = document.querySelectorAll('.bot .bubble')
-    const loading = loadings[loadings.length-1]
+    addBot("🤖 FREDÃO está analisando sua rota logística...")
+
+    const loadings =
+        document.querySelectorAll('.bot .bubble')
+
+    const loading =
+        loadings[loadings.length-1]
 
     try{
 
         const resp = await fetch('/chat',{
+
             method:'POST',
+
             headers:{
                 'Content-Type':'application/json'
             },
+
             body:JSON.stringify({
                 message:texto
             })
+
         })
 
         const data = await resp.json()
 
-        loading.innerText = data.reply || data.error
+        loading.innerText =
+            data.reply || data.error
 
     }catch(e){
 
-        loading.innerText = 'Erro de comunicação.'
+        loading.innerText =
+            'Erro de comunicação com o servidor.'
 
     }
+
 }
 
 async function limpar(){
@@ -637,6 +1021,7 @@ async function limpar(){
     })
 
     location.reload()
+
 }
 
 </script>
