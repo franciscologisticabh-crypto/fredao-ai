@@ -1,6 +1,6 @@
+
 # =========================================================
-# FREDÃO ULTRA — Cotador Inteligente de Fretes
-# Flask + Gemini + Supabase
+# FREDÃO ULTRA — FRONT PREMIUM + BACKEND INTELIGENTE
 # =========================================================
 
 from flask import Flask, request, jsonify, session
@@ -24,7 +24,6 @@ SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
 
 MODEL = "gemini-2.5-flash"
-
 PORT = int(os.environ.get("PORT", 8080))
 
 CEP_ORIGEM     = "30441194"
@@ -48,14 +47,16 @@ app.secret_key = os.environ.get("FLASK_SECRET", os.urandom(24))
 client = genai.Client(api_key=API_KEY)
 
 historicos = {}
-contextos  = {}
+contextos = {}
 
 # =========================================================
 # CONSULTAS
 # =========================================================
 
+
 def limpar_cep(cep: str) -> str:
     return re.sub(r"\D", "", cep or "")
+
 
 
 def consultar_por_cep(cep: str):
@@ -105,6 +106,7 @@ def consultar_por_cep(cep: str):
         return []
 
 
+
 def consultar_por_cidade(cidade: str, uf: str = None):
 
     try:
@@ -132,10 +134,10 @@ def consultar_por_cidade(cidade: str, uf: str = None):
         print("ERRO CIDADE:", e)
         return []
 
-
 # =========================================================
 # EXTRAÇÕES
 # =========================================================
+
 
 def extrair_cep(texto):
 
@@ -145,6 +147,7 @@ def extrair_cep(texto):
         return None
 
     return limpar_cep(match.group())
+
 
 
 def extrair_tipo_envio(texto):
@@ -179,6 +182,7 @@ def extrair_tipo_envio(texto):
         return ["kit", "receptor", "acessorios"]
 
     return tipos
+
 
 
 def extrair_cidade_uf(texto):
@@ -219,10 +223,10 @@ def extrair_cidade_uf(texto):
 
     return cidade, uf
 
-
 # =========================================================
 # FORMATADOR
 # =========================================================
+
 
 def formatar_resultados(dados, origem, tipos=None):
 
@@ -238,7 +242,6 @@ def formatar_resultados(dados, origem, tipos=None):
     for item in dados:
 
         coleta = "✅ Sim" if item.get("coleta") == "Y" else "❌ Não"
-
         entrega = "✅ Sim" if item.get("entrega") == "Y" else "❌ Não"
 
         valores = []
@@ -274,7 +277,6 @@ def formatar_resultados(dados, origem, tipos=None):
 
     return "\n".join(linhas)
 
-
 # =========================================================
 # SYSTEM PROMPT
 # =========================================================
@@ -309,6 +311,379 @@ Você NÃO deve criar informações sozinho.
 """
 
 # =========================================================
+# FRONT PREMIUM
+# =========================================================
+
+HTML = r'''<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>FREDÃO ULTRA</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+
+<style>
+
+:root{
+  --bg:#081028;
+  --card:#172033;
+  --card2:#1e293b;
+  --primary:#2563eb;
+  --border:#334155;
+  --text:#ffffff;
+  --muted:#94a3b8;
+}
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Sora',sans-serif;
+    height:100vh;
+    overflow:hidden;
+}
+
+.shell{
+    display:flex;
+    height:100vh;
+}
+
+.sidebar{
+    width:260px;
+    background:#0f172a;
+    border-right:1px solid var(--border);
+    display:flex;
+    flex-direction:column;
+}
+
+.logo{
+    padding:25px;
+    border-bottom:1px solid var(--border);
+    font-size:24px;
+    font-weight:700;
+}
+
+.newchat{
+    margin:15px;
+    padding:14px;
+    background:var(--card2);
+    border:none;
+    border-radius:12px;
+    color:white;
+    cursor:pointer;
+    font-weight:600;
+}
+
+.newchat:hover{
+    background:#334155;
+}
+
+.main{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+}
+
+.topbar{
+    height:80px;
+    border-bottom:1px solid var(--border);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:0 30px;
+}
+
+.title{
+    font-size:22px;
+    font-weight:700;
+}
+
+.status{
+    color:#22c55e;
+    font-size:14px;
+}
+
+.chat{
+    flex:1;
+    overflow-y:auto;
+    padding:30px;
+}
+
+.row{
+    display:flex;
+    margin-bottom:25px;
+}
+
+.row.user{
+    justify-content:flex-end;
+}
+
+.bubble{
+    max-width:75%;
+    padding:18px;
+    border-radius:18px;
+    line-height:1.7;
+    font-size:14px;
+    white-space:pre-wrap;
+}
+
+.bot .bubble{
+    background:var(--card);
+    border:1px solid var(--border);
+}
+
+.user .bubble{
+    background:var(--primary);
+}
+
+.input-area{
+    border-top:1px solid var(--border);
+    padding:20px;
+}
+
+.input-box{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:16px;
+    display:flex;
+    gap:10px;
+    padding:12px;
+}
+
+textarea{
+    flex:1;
+    background:transparent;
+    border:none;
+    resize:none;
+    outline:none;
+    color:white;
+    font-size:14px;
+    font-family:'Sora',sans-serif;
+    max-height:180px;
+}
+
+button.send{
+    background:var(--primary);
+    border:none;
+    width:50px;
+    border-radius:12px;
+    color:white;
+    cursor:pointer;
+    font-weight:bold;
+}
+
+button.send:hover{
+    background:#1d4ed8;
+}
+
+.welcome{
+    text-align:center;
+    margin-top:120px;
+    color:var(--muted);
+}
+
+.welcome h1{
+    color:white;
+    margin-bottom:10px;
+}
+
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+<div class="sidebar">
+
+<div class="logo">
+🚚 FREDÃO ULTRA
+</div>
+
+<button class="newchat" onclick="limpar()">
++ Nova Conversa
+</button>
+
+</div>
+
+<div class="main">
+
+<div class="topbar">
+    <div class="title">FREDÃO ULTRA</div>
+    <div class="status">● Online</div>
+</div>
+
+<div id="chat" class="chat">
+
+<div class="welcome">
+<h1>Olá! Eu sou o FREDÃO ULTRA</h1>
+<p>Especialista em fretes LATAM e Azul Cargo</p>
+</div>
+
+</div>
+
+<div class="input-area">
+
+<div class="input-box">
+
+<textarea
+id="msg"
+placeholder="Digite sua mensagem..."
+rows="1"
+></textarea>
+
+<button class="send" onclick="enviar()">
+➤
+</button>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<script>
+
+const input = document.getElementById("msg")
+const chat = document.getElementById("chat")
+
+input.addEventListener("input",()=>{
+    input.style.height="auto"
+    input.style.height=Math.min(input.scrollHeight,180)+"px"
+})
+
+input.addEventListener("keydown",function(e){
+
+    if(e.key === "Enter" && !e.shiftKey){
+        e.preventDefault()
+        enviar()
+    }
+
+})
+
+function addUser(text){
+
+    chat.innerHTML += `
+    <div class="row user">
+        <div class="bubble">${text}</div>
+    </div>
+    `
+
+    chat.scrollTop = chat.scrollHeight
+}
+
+function addBot(text){
+
+    chat.innerHTML += `
+    <div class="row bot">
+        <div class="bubble">${text}</div>
+    </div>
+    `
+
+    chat.scrollTop = chat.scrollHeight
+}
+
+async function enviar(){
+
+    const texto = input.value.trim()
+
+    if(!texto) return
+
+    document.querySelector('.welcome')?.remove()
+
+    addUser(texto)
+
+    input.value = ""
+    input.style.height="auto"
+
+    addBot("FREDÃO está analisando...")
+
+    const loadings = document.querySelectorAll('.bot .bubble')
+    const loading = loadings[loadings.length-1]
+
+    try{
+
+        const resp = await fetch('/chat',{
+            method:'POST',
+            headers:{
+                'Content-Type':'application/json'
+            },
+            body:JSON.stringify({
+                message:texto
+            })
+        })
+
+        const data = await resp.json()
+
+        loading.innerText = data.reply || data.error
+
+    }catch(e){
+
+        loading.innerText = 'Erro de comunicação.'
+
+    }
+}
+
+async function limpar(){
+
+    await fetch('/clear',{
+        method:'POST'
+    })
+
+    location.reload()
+}
+
+</script>
+
+</body>
+</html>
+'''
+
+# =========================================================
+# HOME
+# =========================================================
+
+@app.route("/")
+def home():
+
+    if "sid" not in session:
+        session["sid"] = str(uuid.uuid4())
+
+    return HTML
+
+# =========================================================
+# INFO
+# =========================================================
+
+@app.route("/info")
+def info():
+
+    return jsonify({
+        "model": MODEL,
+        "status": "online"
+    })
+
+# =========================================================
+# CLEAR
+# =========================================================
+
+@app.route("/clear", methods=["POST"])
+def clear():
+
+    sid = session.get("sid")
+
+    historicos.pop(sid, None)
+    contextos.pop(sid, None)
+
+    return jsonify({"ok": True})
+
+# =========================================================
 # CHAT
 # =========================================================
 
@@ -341,10 +716,6 @@ def chat():
 
     ctx = contextos[sid]
 
-    # =====================================================
-    # EXTRAÇÃO
-    # =====================================================
-
     cep = extrair_cep(msg)
 
     if cep:
@@ -363,20 +734,12 @@ def chat():
     if uf:
         ctx["uf"] = uf
 
-    # =====================================================
-    # RECUPERA CONTEXTO
-    # =====================================================
-
-    cep_final     = ctx.get("cep")
-    tipos_final   = ctx.get("tipos")
-    cidade_final  = ctx.get("cidade")
-    uf_final      = ctx.get("uf")
+    cep_final = ctx.get("cep")
+    tipos_final = ctx.get("tipos")
+    cidade_final = ctx.get("cidade")
+    uf_final = ctx.get("uf")
 
     dados = []
-
-    # =====================================================
-    # CONSULTA AUTOMÁTICA
-    # =====================================================
 
     if cep_final:
 
@@ -388,10 +751,6 @@ def chat():
             cidade_final,
             uf_final
         )
-
-    # =====================================================
-    # REGRAS INTELIGENTES
-    # =====================================================
 
     if not cep_final and not cidade_final:
 
@@ -481,219 +840,6 @@ MENSAGEM ORIGINAL:
         return jsonify({
             "error": str(e)
         }), 500
-
-
-# =========================================================
-# CLEAR
-# =========================================================
-
-@app.route("/clear", methods=["POST"])
-def clear():
-
-    sid = session.get("sid")
-
-    historicos.pop(sid, None)
-    contextos.pop(sid, None)
-
-    return jsonify({"ok": True})
-
-
-# =========================================================
-# INFO
-# =========================================================
-
-@app.route("/info")
-def info():
-
-    return jsonify({
-        "model": MODEL,
-        "status": "online"
-    })
-
-
-# =========================================================
-# HOME
-# =========================================================
-
-@app.route("/")
-def home():
-
-    return """
-<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-<meta charset="UTF-8">
-<title>FREDÃO ULTRA</title>
-
-<style>
-
-body{
-    margin:0;
-    background:#0f172a;
-    color:white;
-    font-family:Arial;
-}
-
-.topo{
-    background:#111827;
-    padding:20px;
-    font-size:32px;
-    font-weight:bold;
-    border-bottom:1px solid #334155;
-}
-
-.chat{
-    height:75vh;
-    overflow-y:auto;
-    padding:20px;
-}
-
-.msg-user{
-    background:#2563eb;
-    padding:12px;
-    border-radius:10px;
-    margin:10px 0;
-    max-width:80%;
-    margin-left:auto;
-}
-
-.msg-bot{
-    background:#1e293b;
-    padding:12px;
-    border-radius:10px;
-    margin:10px 0;
-    max-width:80%;
-}
-
-.barra{
-    position:fixed;
-    bottom:0;
-    width:100%;
-    display:flex;
-    background:#111827;
-    padding:15px;
-    gap:10px;
-}
-
-input{
-    flex:1;
-    padding:15px;
-    border:none;
-    border-radius:10px;
-    font-size:16px;
-}
-
-button{
-    background:#2563eb;
-    color:white;
-    border:none;
-    padding:15px 25px;
-    border-radius:10px;
-    cursor:pointer;
-    font-weight:bold;
-}
-
-button:hover{
-    background:#1d4ed8;
-}
-
-pre{
-    white-space:pre-wrap;
-}
-
-</style>
-</head>
-
-<body>
-
-<div class="topo">
-    FREDÃO ULTRA 🚚
-</div>
-
-<div id="chat" class="chat">
-    <div class="msg-bot">
-        Olá. Sou o Fredão Ultra.<br><br>
-        Informe:
-        <br>• CEP
-        <br>• cidade
-        <br>• kit / receptor / acessórios
-    </div>
-</div>
-
-<div class="barra">
-    <input id="msg" placeholder="Digite sua mensagem...">
-    <button onclick="enviar()">Enviar</button>
-</div>
-
-<script>
-
-async function enviar(){
-
-    const input = document.getElementById("msg")
-    const chat = document.getElementById("chat")
-
-    const texto = input.value.trim()
-
-    if(!texto) return
-
-    chat.innerHTML += `
-        <div class="msg-user">
-            ${texto}
-        </div>
-    `
-
-    input.value = ""
-
-    chat.innerHTML += `
-        <div class="msg-bot" id="loading">
-            Fredão está pensando...
-        </div>
-    `
-
-    chat.scrollTop = chat.scrollHeight
-
-    try{
-
-        const resp = await fetch("/chat",{
-            method:"POST",
-            headers:{
-                "Content-Type":"application/json"
-            },
-            body:JSON.stringify({
-                message:texto
-            })
-        })
-
-        const data = await resp.json()
-
-        document.getElementById("loading").remove()
-
-        chat.innerHTML += `
-            <div class="msg-bot">
-                <pre>${data.reply || data.error}</pre>
-            </div>
-        `
-
-        chat.scrollTop = chat.scrollHeight
-
-    }catch(e){
-
-        document.getElementById("loading").remove()
-
-        chat.innerHTML += `
-            <div class="msg-bot">
-                Erro de comunicação.
-            </div>
-        `
-    }
-}
-
-</script>
-
-</body>
-</html>
-"""
-
 
 # =========================================================
 # START
